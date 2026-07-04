@@ -1,0 +1,26 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Virtual Thermostat",
+        "description": "Configure a virtual thermostat that controls a real AC based on a temperature sensor.\n\n**Delta AC**: Offset between the user-set target and what is sent to the real AC.\n- Positive (+) = cooling boost (e.g., target 25°C, delta +5 → AC set to 30°C)\n- Negative (-) = heating boost (e.g., target 25°C, delta -5 → AC set to 20°C)\n\nThe virtual thermostat will turn off the real AC when the measured temperature reaches the user's target.",
+        "data": {
+          "name": "Name",
+          "climate_entity": "Real AC entity",
+          "sensor_entity": "Temperature sensor",
+          "delta_ac": "Delta AC (°C)",
+          "hysteresis": "Hysteresis (°C)",
+          "target_temperature": "Initial target temperature (°C)",
+          "min_temp": "Minimum allowed temperature (°C)",
+          "max_temp": "Maximum allowed temperature (°C)"
+        }
+      }
+    },
+    "error": {
+      "sensor_not_found": "Temperature sensor not found",
+      "sensor_unavailable": "Temperature sensor is unavailable",
+      "climate_not_found": "Climate entity not found",
+      "climate_not_climate": "Selected entity is not a climate entity"
+    }
+  }
+}
