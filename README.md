@@ -62,7 +62,7 @@ User sets target 25°C on Virtual Thermostat
 
 1. Ensure [HACS](https://hacs.xyz/) is installed in your Home Assistant
 2. Go to HACS → Integrations → Three-dot menu → Custom repositories
-3. Add: `https://github.com/YOUR_USERNAME/virtual_thermostat` with category "Integration"
+3. Add: `https://github.com/abstinence6/virtual_thermostat` with category "Integration"
 4. Click Install
 5. Restart Home Assistant
 6. Go to Settings → Devices & Services → Add Integration → **Virtual Thermostat**
