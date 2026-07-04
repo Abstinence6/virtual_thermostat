@@ -5,6 +5,7 @@ A virtual climate entity that:
 - Controls a real AC (climate entity)
 - Uses configurable delta between target and AC setpoint
 - Uses hysteresis to prevent short cycling
+- Supports AUTO mode (automatically switches heat/cool)
 """
 
 import logging
@@ -59,7 +60,6 @@ async def async_setup_platform(
 ) -> None:
     """Set up the Virtual Thermostat from YAML configuration."""
     _LOGGER.debug("Setting up Virtual Thermostat platform from YAML")
-    # discovery_info is not used - we read config directly
     entity = VirtualThermostatClimate(
         hass=hass,
         name=config.get(CONF_NAME, "Virtual Thermostat"),
@@ -73,7 +73,6 @@ async def async_setup_platform(
     )
     async_add_entities([entity])
 
-    # Register entity services
     platform = entity_platform.async_get_current_platform()
     _register_services(platform)
 
@@ -103,7 +102,6 @@ async def async_setup_entry(
     )
     async_add_entities([entity])
 
-    # Register entity services
     platform = entity_platform.async_get_current_platform()
     _register_services(platform)
 
@@ -113,7 +111,12 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
 
     _attr_should_poll = True
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT]
+    _attr_hvac_modes = [
+        HVACMode.OFF,
+        HVACMode.COOL,
+        HVACMode.HEAT,
+        HVACMode.AUTO,
+    ]
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
         | ClimateEntityFeature.TURN_OFF
@@ -151,6 +154,7 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
 
         # Internal state tracking
         self._ac_is_running = False
+        self._auto_sub_mode: HVACMode = HVACMode.COOL  # COOL or HEAT when in AUTO
         self._last_sensor_state: float | None = None
 
         _LOGGER.debug(
@@ -186,7 +190,7 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
         if current_temp is not None:
             delta_measured = round(current_temp - self._attr_target_temperature, 1)
 
-        return {
+        attrs = {
             ATTR_AC_TEMPERATURE: ac_temp,
             ATTR_DELTA_MEASURED: delta_measured,
             ATTR_HYSTERESIS: self._hysteresis,
@@ -194,6 +198,11 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
             ATTR_CLIMATE_ENTITY: self._climate_entity_id,
             "ac_is_running": self._ac_is_running,
         }
+
+        if self._attr_hvac_mode == HVACMode.AUTO:
+            attrs["auto_sub_mode"] = self._auto_sub_mode
+
+        return attrs
 
     # ─── Temperature / Mode Control ────────────────────────────────
 
@@ -203,7 +212,6 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
         if temp is None:
             return
 
-        # Clamp to valid range
         temp = max(self._attr_min_temp, min(self._attr_max_temp, temp))
         self._attr_target_temperature = temp
 
@@ -213,7 +221,6 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
             self._attr_name,
         )
 
-        # If the AC should be running, update its target
         if self._attr_hvac_mode != HVACMode.OFF and self._should_ac_run():
             await self._start_ac()
         elif self._attr_hvac_mode != HVACMode.OFF and not self._should_ac_run():
@@ -222,7 +229,7 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
         self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Set HVAC mode (off/cool/heat)."""
+        """Set HVAC mode (off/cool/heat/auto)."""
         self._attr_hvac_mode = hvac_mode
         _LOGGER.debug("HVAC mode set to %s on '%s'", hvac_mode, self._attr_name)
 
@@ -231,15 +238,14 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
             self._attr_hvac_action = HVACAction.OFF
             self._ac_is_running = False
         else:
+            # For AUTO, determine initial sub-mode based on temperature
+            if hvac_mode == HVACMode.AUTO:
+                self._update_auto_sub_mode()
+
             if self._should_ac_run():
                 await self._start_ac()
             else:
                 await self._stop_ac()
-                self._attr_hvac_action = (
-                    HVACAction.IDLE
-                    if hvac_mode == HVACMode.COOL
-                    else HVACAction.IDLE
-                )
 
         self.async_write_ha_state()
 
@@ -257,10 +263,7 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
     async def async_set_ac_offset(self, delta_ac: float) -> None:
         """Service call to set the delta_ac value."""
         self._delta_ac = delta_ac
-        _LOGGER.debug(
-            "delta_ac set to %s°C on '%s'", delta_ac, self._attr_name
-        )
-        # Recalculate AC target if running
+        _LOGGER.debug("delta_ac set to %s°C on '%s'", delta_ac, self._attr_name)
         if self._ac_is_running:
             await self._start_ac()
         self.async_write_ha_state()
@@ -268,10 +271,44 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
     async def async_set_hysteresis(self, hysteresis: float) -> None:
         """Service call to set the hysteresis value."""
         self._hysteresis = hysteresis
-        _LOGGER.debug(
-            "hysteresis set to %s°C on '%s'", hysteresis, self._attr_name
-        )
+        _LOGGER.debug("hysteresis set to %s°C on '%s'", hysteresis, self._attr_name)
         self.async_write_ha_state()
+
+    # ─── AUTO Mode Logic ──────────────────────────────────────────
+
+    def _get_effective_hvac_mode(self) -> HVACMode:
+        """Return the effective HVAC mode (COOL/HEAT) considering AUTO."""
+        if self._attr_hvac_mode == HVACMode.AUTO:
+            return self._auto_sub_mode
+        return self._attr_hvac_mode
+
+    def _update_auto_sub_mode(self) -> None:
+        """Update the AUTO sub-mode based on current temperature vs target."""
+        current_temp = self.current_temperature
+        if current_temp is None:
+            return
+
+        target = self._attr_target_temperature
+        hyst = self._hysteresis
+
+        # Switching deadband: use hysteresis as the threshold
+        if current_temp >= target + hyst:
+            # Too warm → switch to COOL
+            if self._auto_sub_mode != HVACMode.COOL:
+                _LOGGER.debug(
+                    "AUTO: switching to COOL (temp=%s°C >= target=%s°C + hyst=%s°C)",
+                    current_temp, target, hyst,
+                )
+                self._auto_sub_mode = HVACMode.COOL
+        elif current_temp <= target - hyst:
+            # Too cold → switch to HEAT
+            if self._auto_sub_mode != HVACMode.HEAT:
+                _LOGGER.debug(
+                    "AUTO: switching to HEAT (temp=%s°C <= target=%s°C - hyst=%s°C)",
+                    current_temp, target, hyst,
+                )
+                self._auto_sub_mode = HVACMode.HEAT
+        # Otherwise: keep current sub-mode (deadband)
 
     # ─── Update Logic ───────────────────────────────────────────────
 
@@ -284,34 +321,40 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
                 self._sensor_entity_id,
                 self._attr_name,
             )
-            # Fail-safe: if sensor is lost, turn off AC
             if self._ac_is_running:
                 await self._stop_ac()
             return
 
-        # Update hvac_action based on AC state
+        # In AUTO mode, update the sub-mode based on temperature
+        if self._attr_hvac_mode == HVACMode.AUTO:
+            self._update_auto_sub_mode()
+
+        # Update hvac_action based on effective mode and AC state
         if self._attr_hvac_mode == HVACMode.OFF:
             self._attr_hvac_action = HVACAction.OFF
         elif self._ac_is_running:
-            if self._attr_hvac_mode == HVACMode.COOL:
+            eff_mode = self._get_effective_hvac_mode()
+            if eff_mode == HVACMode.COOL:
                 self._attr_hvac_action = HVACAction.COOLING
-            elif self._attr_hvac_mode == HVACMode.HEAT:
+            elif eff_mode == HVACMode.HEAT:
                 self._attr_hvac_action = HVACAction.HEATING
+            else:
+                self._attr_hvac_action = HVACAction.IDLE
         else:
             self._attr_hvac_action = HVACAction.IDLE
 
-        # Check if we need to change AC state based on temperature
         if self._attr_hvac_mode == HVACMode.OFF:
-            return  # Nothing to do if thermostat is off
+            return
 
         should_run = self._should_ac_run()
 
         if should_run and not self._ac_is_running:
             _LOGGER.debug(
-                "Starting AC: temp=%s°C, target=%s°C, delta_ac=%s°C",
+                "Starting AC: temp=%s°C, target=%s°C, delta_ac=%s°C, mode=%s",
                 current_temp,
                 self._attr_target_temperature,
                 self._delta_ac,
+                self._attr_hvac_mode,
             )
             await self._start_ac()
         elif not should_run and self._ac_is_running:
@@ -326,27 +369,25 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
         self.async_write_ha_state()
 
     def _should_ac_run(self) -> bool:
-        """Determine if the AC should be running based on current temperature."""
+        """Determine if the AC should be running based on current temperature.
+
+        For AUTO mode, uses the internally tracked sub-mode (COOL or HEAT).
+        """
         current_temp = self.current_temperature
         if current_temp is None:
             return False
 
         target = self._attr_target_temperature
         hyst = self._hysteresis
+        eff_mode = self._get_effective_hvac_mode()
 
-        if self._attr_hvac_mode == HVACMode.COOL:
-            # In cooling mode:
-            # - AC was running: keep running until temp <= target
-            # - AC was stopped: start only when temp >= target + hysteresis
+        if eff_mode == HVACMode.COOL:
             if self._ac_is_running:
                 return current_temp > target
             else:
                 return current_temp >= target + hyst
 
-        elif self._attr_hvac_mode == HVACMode.HEAT:
-            # In heating mode:
-            # - AC was running: keep running until temp >= target
-            # - AC was stopped: start only when temp <= target - hysteresis
+        elif eff_mode == HVACMode.HEAT:
             if self._ac_is_running:
                 return current_temp < target
             else:
@@ -359,18 +400,19 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
     def _get_ac_target_temperature(self) -> float:
         """Calculate the target temperature to send to the real AC."""
         ac_temp = self._attr_target_temperature + self._delta_ac
-        # Clamp to reasonable range
         return round(max(10, min(40, ac_temp)), 1)
 
     async def _start_ac(self) -> None:
         """Turn on the real AC with the calculated setpoint."""
         ac_temp = self._get_ac_target_temperature()
+        eff_mode = self._get_effective_hvac_mode()
 
         _LOGGER.debug(
-            "Starting real AC '%s' with target %s°C "
+            "Starting real AC '%s' with target %s°C, mode %s "
             "(user target: %s°C, delta_ac: %s°C)",
             self._climate_entity_id,
             ac_temp,
+            eff_mode,
             self._attr_target_temperature,
             self._delta_ac,
         )
@@ -386,13 +428,13 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
             blocking=True,
         )
 
-        # Set the HVAC mode on the real AC
+        # Set the HVAC mode on the real AC (use effective mode for AUTO)
         await self.hass.services.async_call(
             "climate",
             "set_hvac_mode",
             {
                 "entity_id": self._climate_entity_id,
-                "hvac_mode": self._attr_hvac_mode,
+                "hvac_mode": eff_mode,
             },
             blocking=True,
         )
@@ -410,10 +452,7 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
 
     async def _stop_ac(self) -> None:
         """Turn off the real AC."""
-        _LOGGER.debug(
-            "Stopping real AC '%s'",
-            self._climate_entity_id,
-        )
+        _LOGGER.debug("Stopping real AC '%s'", self._climate_entity_id)
 
         await self.hass.services.async_call(
             "climate",
@@ -444,6 +483,7 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
                 HVACMode.OFF,
                 HVACMode.COOL,
                 HVACMode.HEAT,
+                HVACMode.AUTO,
             ]:
                 self._attr_hvac_mode = last_state.state
 
@@ -464,6 +504,12 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
                     "True",
                     "true",
                 ]
+
+            # Restore auto sub-mode
+            if last_state.attributes.get("auto_sub_mode") is not None:
+                restored = last_state.attributes["auto_sub_mode"]
+                if restored in [HVACMode.COOL, HVACMode.HEAT]:
+                    self._auto_sub_mode = restored
 
 
 # ─── Service Registration ──────────────────────────────────────────
