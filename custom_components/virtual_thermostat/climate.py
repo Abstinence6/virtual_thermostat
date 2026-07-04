@@ -214,9 +214,9 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
         )
 
         # If the AC should be running, update its target
-        if self._hvac_mode != HVACMode.OFF and self._should_ac_run():
+        if self._attr_hvac_mode != HVACMode.OFF and self._should_ac_run():
             await self._start_ac()
-        elif self._hvac_mode != HVACMode.OFF and not self._should_ac_run():
+        elif self._attr_hvac_mode != HVACMode.OFF and not self._should_ac_run():
             await self._stop_ac()
 
         self.async_write_ha_state()
