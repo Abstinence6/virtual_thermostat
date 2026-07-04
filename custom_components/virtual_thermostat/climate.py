@@ -428,7 +428,8 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
             blocking=True,
         )
 
-        # Set the HVAC mode on the real AC (use effective mode for AUTO)
+        # Set the HVAC mode on the real AC (use effective mode for AUTO).
+        # This also turns on the AC — no separate turn_on needed.
         await self.hass.services.async_call(
             "climate",
             "set_hvac_mode",
@@ -436,14 +437,6 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
                 "entity_id": self._climate_entity_id,
                 "hvac_mode": eff_mode,
             },
-            blocking=True,
-        )
-
-        # Turn on the real AC
-        await self.hass.services.async_call(
-            "climate",
-            "turn_on",
-            {"entity_id": self._climate_entity_id},
             blocking=True,
         )
 
