@@ -10,6 +10,7 @@ A smart **virtual climate controller** for Home Assistant that bridges a tempera
 - **Delta AC** — configurable temperature offset between the user-set target and what's actually sent to the real AC
 - **Hysteresis** — prevents short cycling of the AC unit
 - **Auto shutoff** — turns off the real AC when the measured temperature reaches the user's target
+- **Fan Only / Ventilation mode** — run the real AC in fan-only mode for air circulation without temperature control
 - **Config flow** — easy setup via Home Assistant UI
 - **State persistence** — remembers target temperature, hysteresis, and AC state across restarts
 - **Custom services** — change delta_ac and hysteresis on the fly via services

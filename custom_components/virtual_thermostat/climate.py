@@ -6,6 +6,7 @@ A virtual climate entity that:
 - Uses configurable delta between target and AC setpoint
 - Uses hysteresis to prevent short cycling
 - Supports AUTO mode (automatically switches heat/cool)
+- Supports FAN_ONLY mode (ventilation without temperature control)
 """
 
 import logging
@@ -116,6 +117,7 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
         HVACMode.COOL,
         HVACMode.HEAT,
         HVACMode.AUTO,
+        HVACMode.FAN_ONLY,
     ]
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
@@ -338,6 +340,8 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
                 self._attr_hvac_action = HVACAction.COOLING
             elif eff_mode == HVACMode.HEAT:
                 self._attr_hvac_action = HVACAction.HEATING
+            elif eff_mode == HVACMode.FAN_ONLY:
+                self._attr_hvac_action = HVACAction.FAN
             else:
                 self._attr_hvac_action = HVACAction.IDLE
         else:
@@ -373,13 +377,18 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
 
         For AUTO mode, uses the internally tracked sub-mode (COOL or HEAT).
         """
+        eff_mode = self._get_effective_hvac_mode()
+
+        # FAN_ONLY: always run — ventilation, no temperature logic
+        if eff_mode == HVACMode.FAN_ONLY:
+            return True
+
         current_temp = self.current_temperature
         if current_temp is None:
             return False
 
         target = self._attr_target_temperature
         hyst = self._hysteresis
-        eff_mode = self._get_effective_hvac_mode()
 
         if eff_mode == HVACMode.COOL:
             if self._ac_is_running:
@@ -404,8 +413,27 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
 
     async def _start_ac(self) -> None:
         """Turn on the real AC with the calculated setpoint."""
-        ac_temp = self._get_ac_target_temperature()
         eff_mode = self._get_effective_hvac_mode()
+
+        if eff_mode == HVACMode.FAN_ONLY:
+            _LOGGER.debug(
+                "Starting real AC '%s' in FAN_ONLY mode (ventilation)",
+                self._climate_entity_id,
+            )
+            await self.hass.services.async_call(
+                "climate",
+                "set_hvac_mode",
+                {
+                    "entity_id": self._climate_entity_id,
+                    "hvac_mode": HVACMode.FAN_ONLY,
+                },
+                blocking=True,
+            )
+            self._ac_is_running = True
+            self.async_write_ha_state()
+            return
+
+        ac_temp = self._get_ac_target_temperature()
 
         _LOGGER.debug(
             "Starting real AC '%s' with target %s°C, mode %s "
@@ -477,6 +505,7 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
                 HVACMode.COOL,
                 HVACMode.HEAT,
                 HVACMode.AUTO,
+                HVACMode.FAN_ONLY,
             ]:
                 self._attr_hvac_mode = last_state.state
 
