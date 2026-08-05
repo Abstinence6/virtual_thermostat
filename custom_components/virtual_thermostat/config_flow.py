@@ -202,13 +202,13 @@ class VirtualThermostatOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize the options flow."""
-        self.config_entry = config_entry
+        self._config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the options form."""
-        current = {**self.config_entry.data, **self.config_entry.options}
+        current = {**self._config_entry.data, **self._config_entry.options}
         if user_input is None:
             return self._show_form(current)
 
