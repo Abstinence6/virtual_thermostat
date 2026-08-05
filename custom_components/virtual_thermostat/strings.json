@@ -22,5 +22,23 @@
       "climate_not_found": "Climate entity not found",
       "climate_not_climate": "Selected entity is not a climate entity"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Virtual Thermostat options",
+        "description": "Update the virtual thermostat settings. Changes reload the integration.",
+        "data": {
+          "name": "Name",
+          "climate_entity": "Real AC entity",
+          "sensor_entity": "Temperature sensor",
+          "delta_ac": "Delta AC (°C)",
+          "hysteresis": "Hysteresis (°C)",
+          "target_temperature": "Target temperature (°C)",
+          "min_temp": "Minimum allowed temperature (°C)",
+          "max_temp": "Maximum allowed temperature (°C)"
+        }
+      }
+    }
   }
 }

@@ -90,6 +90,8 @@ When adding the integration via Settings → Devices & Services → Add Integrat
 | **Initial target temperature** | Starting target temperature |
 | **Min / Max temperature** | Allowed temperature range |
 
+The same fields can be changed later from **Settings → Devices & services → Virtual Thermostat → Configure**. Saving options reloads the config entry so the new entities, limits, target, delta, hysteresis, and name are applied at runtime.
+
 ### Via YAML
 
 ```yaml

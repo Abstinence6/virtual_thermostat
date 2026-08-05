@@ -88,7 +88,7 @@ async def async_setup_entry(
         "Setting up Virtual Thermostat from config entry: %s",
         config_entry.entry_id,
     )
-    data = config_entry.data
+    data = {**config_entry.data, **config_entry.options}
 
     entity = VirtualThermostatClimate(
         hass=hass,
@@ -100,6 +100,7 @@ async def async_setup_entry(
         target_temperature=data.get(CONF_TARGET_TEMP, DEFAULT_TARGET_TEMP),
         min_temp=data.get(CONF_MIN_TEMP, DEFAULT_MIN_TEMP),
         max_temp=data.get(CONF_MAX_TEMP, DEFAULT_MAX_TEMP),
+        unique_id=config_entry.unique_id or config_entry.entry_id,
     )
     async_add_entities([entity])
 
@@ -136,11 +137,12 @@ class VirtualThermostatClimate(ClimateEntity, RestoreEntity):
         target_temperature: float,
         min_temp: float,
         max_temp: float,
+        unique_id: str | None = None,
     ) -> None:
         """Initialize the virtual thermostat."""
         self.hass = hass
         self._attr_name = name
-        self._attr_unique_id = f"virtual_thermostat_{name.lower().replace(' ', '_')}"
+        self._attr_unique_id = unique_id or f"virtual_thermostat_{name.lower().replace(' ', '_')}"
 
         self._climate_entity_id = climate_entity_id
         self._sensor_entity_id = sensor_entity_id
